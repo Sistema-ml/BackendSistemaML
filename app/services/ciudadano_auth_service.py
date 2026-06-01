@@ -64,8 +64,25 @@ def actualizar_usuario(usuario_id: str, data: dict) -> dict | None:
 
 def crear_ciudadano(data: dict) -> dict:
     sb = get_supabase()
-    res = sb.table("ciudadanos").insert(data).execute()
-    return res.data[0]
+    if data.get("fecha_nac"):
+        data["fecha_nac"] = data["fecha_nac"].isoformat()
+    
+    # Si ya existe con ese DNI pero inactivo, reactivarlo
+    existente = sb.table("ciudadanos").select("*").eq("dni", data["dni"]).execute().data
+    if existente:
+        if not existente[0]["activo"]:
+            res = sb.table("ciudadanos").update({**data, "activo": True}).eq("dni", data["dni"]).execute()
+            return res.data[0]
+        else:
+            raise ValueError("Ya existe un ciudadano activo con ese DNI")
+    
+    try:
+        res = sb.table("ciudadanos").insert(data).execute()
+        return res.data[0]
+    except Exception as e:
+        if "23505" in str(e):
+            raise ValueError("Ya existe un ciudadano con ese DNI")
+        raise
 
 
 def listar_ciudadanos(skip: int = 0, limit: int = 50) -> list:

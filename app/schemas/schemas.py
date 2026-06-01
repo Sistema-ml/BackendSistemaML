@@ -82,6 +82,18 @@ class TramiteUpdate(BaseModel):
     fecha_resolucion: Optional[datetime] = None
 
 
+class CiudadanoBasico(BaseModel):
+    id: Optional[str] = None
+    dni: Optional[str] = None
+    nombre: Optional[str] = None
+    apellido: Optional[str] = None
+    email: Optional[str] = None
+    telefono: Optional[str] = None
+
+    class Config:
+        extra = "allow"
+
+
 class TramiteOut(BaseModel):
     id: str
     codigo: str
@@ -99,6 +111,10 @@ class TramiteOut(BaseModel):
     fecha_registro: datetime
     fecha_resolucion: Optional[datetime]
     created_at: datetime
+    ciudadanos: Optional[CiudadanoBasico] = None
+
+    class Config:
+        extra = "allow"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -146,10 +162,10 @@ from pydantic import BaseModel, Field
 
 class MLPredictRequest(BaseModel):
     tipo_tramite: str
-    nivel_urgencia: int = Field(..., ge=1, le=5)
     area_responsable: str
     tiempo_espera_dias: int = Field(..., ge=0)
     cantidad_documentos: int = Field(..., ge=0)
+    nivel_urgencia: Optional[int] = None  # ignorado, mantenido por compatibilidad
 
 
 class MLPredictResponse(BaseModel):

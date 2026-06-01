@@ -47,6 +47,7 @@ from app.services.ciudadano_auth_service import (
     buscar_ciudadano_dni, actualizar_ciudadano, historial_ciudadano,
 )
 from app.core.dependencies import require_any_role
+from app.core.supabase import get_supabase
 
 router_ciudadanos = APIRouter(prefix="/ciudadanos", tags=["Ciudadanos"],
                               dependencies=[Depends(require_any_role)])
@@ -90,14 +91,19 @@ def actualizar(ciudadano_id: str, body: CiudadanoUpdate):
 def historial(ciudadano_id: str):
     return historial_ciudadano(ciudadano_id)
 
-
+@router_ciudadanos.delete("/{ciudadano_id}", status_code=204)
+def eliminar(ciudadano_id: str):
+    sb = get_supabase()
+    sb.table("ciudadanos").update({"activo": False}).eq("id", ciudadano_id).execute()
 # ─────────────────────────────────────────────────────────────
 # app/routers/tramites.py
 from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
 from app.schemas.schemas import TramiteCreate, TramiteUpdate, TramiteOut
 from app.services.tramite_service import (
     crear_tramite, listar_tramites, obtener_tramite,
-    buscar_tramite_codigo, actualizar_tramite, historial_tramite, dashboard_resumen,
+    buscar_tramite_codigo, actualizar_tramite, historial_tramite,
+    dashboard_resumen, cambiar_estado_tramite,
 )
 from app.core.dependencies import require_any_role, get_current_user
 
@@ -137,9 +143,24 @@ def obtener(tramite_id: str):
     return t
 
 
+ESTADO_MAP = {
+    "pendiente": "pendiente",
+    "en revision": "en_revision",
+    "en revisión": "en_revision",
+    "en_revision": "en_revision",
+    "en_revisión": "en_revision",
+    "observado": "observado",
+    "aprobado": "aprobado",
+    "rechazado": "rechazado",
+}
+
+
 @router_tramites.patch("/{tramite_id}", response_model=TramiteOut)
 def actualizar(tramite_id: str, body: TramiteUpdate, current=Depends(get_current_user)):
-    updated = actualizar_tramite(tramite_id, body.model_dump(exclude_none=True), current["sub"])
+    data = body.model_dump(exclude_none=True)
+    if "estado" in data:
+        data["estado"] = ESTADO_MAP.get(data["estado"].lower(), data["estado"].lower())
+    updated = actualizar_tramite(tramite_id, data, current["sub"])
     if not updated:
         raise HTTPException(status_code=404, detail="Trámite no encontrado")
     return updated
@@ -148,6 +169,20 @@ def actualizar(tramite_id: str, body: TramiteUpdate, current=Depends(get_current
 @router_tramites.get("/{tramite_id}/historial")
 def historial(tramite_id: str):
     return historial_tramite(tramite_id)
+
+
+class CambiarEstadoBody(BaseModel):
+    estado: str
+    observacion: str | None = None
+
+
+@router_tramites.patch("/{tramite_id}/estado")
+def cambiar_estado(tramite_id: str, body: CambiarEstadoBody, current=Depends(get_current_user)):
+    estado_final = ESTADO_MAP.get(body.estado.lower(), body.estado.lower())
+    updated = cambiar_estado_tramite(tramite_id, estado_final, body.observacion, current["sub"])
+    if not updated:
+        raise HTTPException(status_code=404, detail="Trámite no encontrado")
+    return updated
 
 
 # ─────────────────────────────────────────────────────────────
