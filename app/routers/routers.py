@@ -1,0 +1,216 @@
+# app/routers/auth.py
+from fastapi import APIRouter, HTTPException, status, Depends
+from app.schemas.usuarios import LoginRequest, TokenResponse, UsuarioCreate, UsuarioOut, UsuarioUpdate
+from app.services.ciudadano_auth_service import login, crear_usuario, listar_usuarios, actualizar_usuario
+from app.core.dependencies import get_current_user, require_admin
+
+router = APIRouter(prefix="/auth", tags=["Autenticación"])
+
+
+@router.post("/login", response_model=TokenResponse)
+def do_login(body: LoginRequest):
+    result = login(body.email, body.password)
+    if not result:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas")
+    return TokenResponse(access_token=result["token"], usuario=result["usuario"])
+
+
+@router.get("/me", response_model=dict)
+def me(current=Depends(get_current_user)):
+    return current
+
+
+@router.post("/usuarios", response_model=UsuarioOut, dependencies=[Depends(require_admin)])
+def crear(body: UsuarioCreate):
+    return crear_usuario(body.model_dump())
+
+
+@router.get("/usuarios", response_model=list[UsuarioOut], dependencies=[Depends(require_admin)])
+def listar():
+    return listar_usuarios()
+
+
+@router.patch("/usuarios/{usuario_id}", response_model=UsuarioOut, dependencies=[Depends(require_admin)])
+def actualizar(usuario_id: str, body: UsuarioUpdate):
+    updated = actualizar_usuario(usuario_id, body.model_dump(exclude_none=True))
+    if not updated:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    return updated
+
+
+# ─────────────────────────────────────────────────────────────
+# app/routers/ciudadanos.py
+from fastapi import APIRouter, HTTPException, Depends
+from app.schemas.schemas import CiudadanoCreate, CiudadanoUpdate, CiudadanoOut
+from app.services.ciudadano_auth_service import (
+    crear_ciudadano, listar_ciudadanos, obtener_ciudadano,
+    buscar_ciudadano_dni, actualizar_ciudadano, historial_ciudadano,
+)
+from app.core.dependencies import require_any_role
+
+router_ciudadanos = APIRouter(prefix="/ciudadanos", tags=["Ciudadanos"],
+                              dependencies=[Depends(require_any_role)])
+
+
+@router_ciudadanos.post("/", response_model=CiudadanoOut, status_code=201)
+def crear(body: CiudadanoCreate):
+    return crear_ciudadano(body.model_dump())
+
+
+@router_ciudadanos.get("/", response_model=list[CiudadanoOut])
+def listar(skip: int = 0, limit: int = 50):
+    return listar_ciudadanos(skip, limit)
+
+
+@router_ciudadanos.get("/buscar", response_model=CiudadanoOut)
+def buscar_dni(dni: str):
+    c = buscar_ciudadano_dni(dni)
+    if not c:
+        raise HTTPException(status_code=404, detail="Ciudadano no encontrado")
+    return c
+
+
+@router_ciudadanos.get("/{ciudadano_id}", response_model=CiudadanoOut)
+def obtener(ciudadano_id: str):
+    c = obtener_ciudadano(ciudadano_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Ciudadano no encontrado")
+    return c
+
+
+@router_ciudadanos.patch("/{ciudadano_id}", response_model=CiudadanoOut)
+def actualizar(ciudadano_id: str, body: CiudadanoUpdate):
+    updated = actualizar_ciudadano(ciudadano_id, body.model_dump(exclude_none=True))
+    if not updated:
+        raise HTTPException(status_code=404, detail="Ciudadano no encontrado")
+    return updated
+
+
+@router_ciudadanos.get("/{ciudadano_id}/historial")
+def historial(ciudadano_id: str):
+    return historial_ciudadano(ciudadano_id)
+
+
+# ─────────────────────────────────────────────────────────────
+# app/routers/tramites.py
+from fastapi import APIRouter, HTTPException, Depends
+from app.schemas.schemas import TramiteCreate, TramiteUpdate, TramiteOut
+from app.services.tramite_service import (
+    crear_tramite, listar_tramites, obtener_tramite,
+    buscar_tramite_codigo, actualizar_tramite, historial_tramite, dashboard_resumen,
+)
+from app.core.dependencies import require_any_role, get_current_user
+
+router_tramites = APIRouter(prefix="/tramites", tags=["Trámites"],
+                            dependencies=[Depends(require_any_role)])
+
+
+@router_tramites.post("/", response_model=TramiteOut, status_code=201)
+def crear(body: TramiteCreate):
+    return crear_tramite(body.model_dump())
+
+
+@router_tramites.get("/")
+def listar(estado: str | None = None, prioridad: str | None = None,
+           area: str | None = None, skip: int = 0, limit: int = 50):
+    return listar_tramites(estado, prioridad, area, skip, limit)
+
+
+@router_tramites.get("/buscar")
+def buscar_codigo(codigo: str):
+    t = buscar_tramite_codigo(codigo)
+    if not t:
+        raise HTTPException(status_code=404, detail="Trámite no encontrado")
+    return t
+
+
+@router_tramites.get("/dashboard")
+def dashboard():
+    return dashboard_resumen()
+
+
+@router_tramites.get("/{tramite_id}", response_model=TramiteOut)
+def obtener(tramite_id: str):
+    t = obtener_tramite(tramite_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Trámite no encontrado")
+    return t
+
+
+@router_tramites.patch("/{tramite_id}", response_model=TramiteOut)
+def actualizar(tramite_id: str, body: TramiteUpdate, current=Depends(get_current_user)):
+    updated = actualizar_tramite(tramite_id, body.model_dump(exclude_none=True), current["sub"])
+    if not updated:
+        raise HTTPException(status_code=404, detail="Trámite no encontrado")
+    return updated
+
+
+@router_tramites.get("/{tramite_id}/historial")
+def historial(tramite_id: str):
+    return historial_tramite(tramite_id)
+
+
+# ─────────────────────────────────────────────────────────────
+# app/routers/documentos.py
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from app.services.documento_notif_service import subir_documento, listar_documentos, url_descarga, eliminar_documento
+from app.core.dependencies import require_any_role, get_current_user
+
+router_documentos = APIRouter(prefix="/documentos", tags=["Documentos"],
+                              dependencies=[Depends(require_any_role)])
+
+MAX_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
+@router_documentos.post("/{tramite_id}", status_code=201)
+async def subir(tramite_id: str, file: UploadFile = File(...), current=Depends(get_current_user)):
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Solo se permiten archivos PDF")
+    contenido = await file.read()
+    if len(contenido) > MAX_SIZE:
+        raise HTTPException(status_code=400, detail="El archivo supera los 10 MB")
+    return subir_documento(tramite_id, file.filename, contenido, file.content_type, current["sub"])
+
+
+@router_documentos.get("/{tramite_id}")
+def listar(tramite_id: str):
+    return listar_documentos(tramite_id)
+
+
+@router_documentos.get("/{documento_id}/url")
+def get_url(documento_id: str):
+    from app.core.supabase import get_supabase
+    sb = get_supabase()
+    doc = sb.table("documentos").select("ruta_storage").eq("id", documento_id).single().execute().data
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    return {"url": url_descarga(doc["ruta_storage"])}
+
+
+@router_documentos.delete("/{documento_id}", status_code=204)
+def eliminar(documento_id: str):
+    ok = eliminar_documento(documento_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+
+
+# ─────────────────────────────────────────────────────────────
+# app/routers/ml.py
+from fastapi import APIRouter, Depends
+from app.schemas.schemas import MLPredictRequest, MLPredictResponse
+from app.services.ml_service import predecir_con_probabilidades, entrenar_modelo
+from app.core.dependencies import require_admin, require_any_role
+
+router_ml = APIRouter(prefix="/ml", tags=["Machine Learning"])
+
+
+@router_ml.post("/predecir", response_model=MLPredictResponse, dependencies=[Depends(require_any_role)])
+def predecir(body: MLPredictRequest):
+    result = predecir_con_probabilidades(**body.model_dump())
+    return MLPredictResponse(**result)
+
+
+@router_ml.post("/entrenar", dependencies=[Depends(require_admin)])
+def entrenar():
+    """Re-entrena el modelo (solo administradores)."""
+    return entrenar_modelo()
