@@ -109,17 +109,15 @@ def _generar_dataset(n: int = 1200) -> pd.DataFrame:
     rng = np.random.default_rng(42)
     tipos    = rng.choice(TIPOS_TRAMITE, n)
     areas    = rng.choice(AREAS, n)
-    espera   = rng.integers(0, 91, n)
     docs     = rng.integers(0, 16, n)
 
     prioridades = []
-    for tipo, area, e, d in zip(tipos, areas, espera, docs):
+    for tipo, area, d in zip(tipos, areas, docs):
         peso_tipo = PESO_TIPO.get(tipo, 1)
         peso_area = PESO_AREA.get(area, 1)
         score = (
             peso_tipo * 1.5 +
             peso_area * 1.0 +
-            min(e / 30, 2.0) +
             min(d / 8, 1.0)
         )
         score += rng.normal(0, 0.3)
@@ -133,7 +131,6 @@ def _generar_dataset(n: int = 1200) -> pd.DataFrame:
     return pd.DataFrame({
         "tipo_tramite":        tipos,
         "area_responsable":    areas,
-        "tiempo_espera_dias":  espera,
         "cantidad_documentos": docs,
         "prioridad":           prioridades,
     })
@@ -155,8 +152,7 @@ def entrenar_modelo() -> dict:
     y_encoded = enc_label.fit_transform(df["prioridad"])
     clases = list(enc_label.classes_)
 
-    X = df[["tipo_enc", "area_enc",
-            "tiempo_espera_dias", "cantidad_documentos"]].values
+    X = df[["tipo_enc", "area_enc", "cantidad_documentos"]].values
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
@@ -166,7 +162,7 @@ def entrenar_modelo() -> dict:
     )
 
     model = keras.Sequential([
-        keras.layers.Dense(32, activation="relu", input_shape=(4,)),
+        keras.layers.Dense(32, activation="relu", input_shape=(3,)),
         keras.layers.Dense(16, activation="relu"),
         keras.layers.Dense(8,  activation="relu"),
         keras.layers.Dense(3,  activation="softmax"),
@@ -218,12 +214,10 @@ def cargar_modelo() -> bool:
     return True
 
 
-def _preparar_entrada(tipo_tramite, area_responsable,
-                      tiempo_espera_dias, cantidad_documentos) -> np.ndarray:
+def _preparar_entrada(tipo_tramite, area_responsable, cantidad_documentos):
     tipo_enc = _safe_encode(_enc_tipo, tipo_tramite)
     area_enc = _safe_encode(_enc_area, area_responsable)
-    X = np.array([[tipo_enc, area_enc,
-                   tiempo_espera_dias, cantidad_documentos]], dtype=float)
+    X = np.array([[tipo_enc, area_enc, cantidad_documentos]], dtype=float)
     return _scaler.transform(X)
 
 
@@ -237,8 +231,7 @@ def predecir_con_probabilidades(
     global _model, _clases
     if _model is None:
         cargar_modelo()
-    X = _preparar_entrada(tipo_tramite, area_responsable,
-                          tiempo_espera_dias, cantidad_documentos)
+    X = _preparar_entrada(tipo_tramite, area_responsable, cantidad_documentos)
     proba = _model.predict(X, verbose=0)[0]
     idx   = int(np.argmax(proba))
     probabilidades = {c: round(float(p), 4) for c, p in zip(_clases, proba)}
