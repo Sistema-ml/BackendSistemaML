@@ -18,6 +18,7 @@ from app.routers.routers import (
     router_tramites,
     router_documentos,
     router_ml,
+    router_notificaciones,
 )
 
 settings = get_settings()
@@ -69,6 +70,7 @@ app.include_router(router_ciudadanos)
 app.include_router(router_tramites)
 app.include_router(router_documentos)
 app.include_router(router_ml)
+app.include_router(router_notificaciones)
 
 
 # ── Health check ──────────────────────────────────────────

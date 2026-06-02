@@ -184,6 +184,17 @@ def cambiar_estado(tramite_id: str, body: CambiarEstadoBody, current=Depends(get
         raise HTTPException(status_code=404, detail="Trámite no encontrado")
     return updated
 
+@router_tramites.patch("/{tramite_id}/estado")
+def cambiar_estado(tramite_id: str, body: TramiteUpdate, current=Depends(get_current_user)):
+    updated = actualizar_tramite(tramite_id, body.model_dump(exclude_none=True), current["sub"])
+    if not updated:
+        raise HTTPException(status_code=404, detail="Trámite no encontrado")
+    return updated
+
+@router_tramites.delete("/{tramite_id}", status_code=204)
+def eliminar(tramite_id: str):
+    sb = get_supabase()
+    sb.table("tramites").update({"activo": False}).eq("id", tramite_id).execute()
 
 # ─────────────────────────────────────────────────────────────
 # app/routers/documentos.py
@@ -249,3 +260,33 @@ def predecir(body: MLPredictRequest):
 def entrenar():
     """Re-entrena el modelo (solo administradores)."""
     return entrenar_modelo()
+
+from fastapi import APIRouter, Depends
+from app.core.dependencies import require_any_role
+from app.core.supabase import get_supabase
+
+router_notificaciones = APIRouter(
+    prefix="/notificaciones",
+    tags=["Notificaciones"],
+    dependencies=[Depends(require_any_role)],
+)
+
+@router_notificaciones.get("/")
+def listar(no_leidas: bool | None = None):
+    sb = get_supabase()
+    query = sb.table("notificaciones").select("*").order("created_at", desc=True)
+    if no_leidas:
+        query = query.eq("leida", False)
+    return query.execute().data
+
+@router_notificaciones.patch("/{notificacion_id}/leida")
+def marcar_leida(notificacion_id: str):
+    sb = get_supabase()
+    res = sb.table("notificaciones").update({"leida": True}).eq("id", notificacion_id).execute()
+    return res.data[0] if res.data else {}
+
+@router_notificaciones.patch("/marcar-todas-leidas")
+def marcar_todas_leidas():
+    sb = get_supabase()
+    sb.table("notificaciones").update({"leida": True}).eq("leida", False).execute()
+    return {"ok": True}

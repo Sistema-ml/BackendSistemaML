@@ -1,9 +1,16 @@
 # app/services/documento_service.py
 import uuid
 from app.core.supabase import get_supabase
+import re
+import unicodedata
 
 BUCKET = "documentos-tramites"
 
+def _limpiar_nombre(nombre: str) -> str:
+    nombre = unicodedata.normalize("NFKD", nombre)
+    nombre = nombre.encode("ascii", "ignore").decode("ascii")
+    nombre = re.sub(r"[^\w\.\-]", "_", nombre)
+    return nombre
 
 def subir_documento(
     tramite_id: str,
@@ -18,7 +25,7 @@ def subir_documento(
     sb = get_supabase()
 
     # Ruta única dentro del bucket: tramites/<tramite_id>/<uuid>_<nombre>
-    ruta = f"tramites/{tramite_id}/{uuid.uuid4().hex}_{nombre_archivo}"
+    ruta = f"tramites/{tramite_id}/{uuid.uuid4().hex}_{_limpiar_nombre(nombre_archivo)}"
 
     # Subir a Storage
     sb.storage.from_(BUCKET).upload(
@@ -50,7 +57,13 @@ def listar_documentos(tramite_id: str) -> list:
         .order("created_at")
         .execute()
     )
-    return res.data
+    docs = res.data
+    for doc in docs:
+        try:
+            doc["url"] = url_descarga(doc["ruta_storage"])
+        except Exception:
+            doc["url"] = None
+    return docs
 
 
 def url_descarga(ruta_storage: str, expires_in: int = 3600) -> str:

@@ -191,16 +191,16 @@ def historial_tramite(tramite_id: str) -> list:
 def dashboard_resumen() -> dict:
     sb = get_supabase()
     res = sb.table("vista_dashboard_resumen").select("*").single().execute()
-    tramites_por_area = (
-        sb.table("tramites")
-        .select("area_responsable, id")
-        .execute()
-        .data
-    )
-    # Agrupar por área en Python
+
+    tramites = sb.table("tramites").select("area_responsable, id, prioridad").execute().data
+
     areas: dict = {}
-    for t in tramites_por_area:
+    prioridades: dict = {"alta": 0, "media": 0, "baja": 0}
+    for t in tramites:
         area = t["area_responsable"]
         areas[area] = areas.get(area, 0) + 1
+        p = (t.get("prioridad") or "media").lower()
+        if p in prioridades:
+            prioridades[p] += 1
 
-    return {**res.data, "tramites_por_area": areas}
+    return {**res.data, "tramites_por_area": areas, "por_prioridad": prioridades}
