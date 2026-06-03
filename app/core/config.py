@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
     # App
     app_env: str = "development"
-    app_cors_origins: str = "http://localhost:5173,frontend-chi-ashen-92.vercel.app"
+    app_cors_origins: str = "http://localhost:5173,https://frontend-chi-ashen-92.vercel.app"
 
     @property
     def cors_origins_list(self) -> list[str]:
