@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from app.schemas.usuarios import LoginRequest, TokenResponse, UsuarioCreate, UsuarioOut, UsuarioUpdate
 from app.services.ciudadano_auth_service import login, crear_usuario, listar_usuarios, actualizar_usuario
 from app.core.dependencies import get_current_user, require_admin
+from app.core.supabase import get_supabase
 
 router = APIRouter(prefix="/auth", tags=["Autenticación"])
 
@@ -22,7 +23,27 @@ def me(current=Depends(get_current_user)):
 
 @router.post("/usuarios", response_model=UsuarioOut, dependencies=[Depends(require_admin)])
 def crear(body: UsuarioCreate):
-    return crear_usuario(body.model_dump())
+    data = body.model_dump()
+    password_plano = data["password"]
+    nuevo = crear_usuario(data)
+    try:
+        from app.services.documento_notif_service import _enviar_email
+        from app.core.config import get_settings
+        cfg = get_settings()
+        print(f"SMTP CONFIG: host={cfg.smtp_host} user='{cfg.smtp_user}' password='{cfg.smtp_password}'")
+        if cfg.smtp_user:
+            _enviar_email(
+                nuevo["email"],
+                "Bienvenido al Sistema - Municipalidad Provincial de Yau",
+                f"Hola {nuevo['nombre']}, tu cuenta ha sido creada.<br><br>"
+                f"<b>Email:</b> {nuevo['email']}<br>"
+                f"<b>Contraseña:</b> {password_plano}<br>"
+                f"<b>Rol:</b> {nuevo['rol']}<br><br>"
+                "Por favor cambia tu contraseña al iniciar sesión.",
+            )
+    except Exception as e:
+        print(f"ERROR EMAIL: {e}")
+    return nuevo
 
 
 @router.get("/usuarios", response_model=list[UsuarioOut], dependencies=[Depends(require_admin)])
@@ -37,6 +58,12 @@ def actualizar(usuario_id: str, body: UsuarioUpdate):
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     return updated
 
+@router.delete("/usuarios/{usuario_id}", status_code=204, dependencies=[Depends(require_admin)])
+def eliminar_usuario(usuario_id: str):
+    sb = get_supabase()
+    res = sb.table("usuarios").delete().eq("id", usuario_id).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
 # ─────────────────────────────────────────────────────────────
 # app/routers/ciudadanos.py
@@ -163,6 +190,27 @@ def actualizar(tramite_id: str, body: TramiteUpdate, current=Depends(get_current
     updated = actualizar_tramite(tramite_id, data, current["sub"])
     if not updated:
         raise HTTPException(status_code=404, detail="Trámite no encontrado")
+    # Enviar correo al ciudadano
+    try:
+        from app.services.documento_notif_service import _enviar_email
+        from app.core.supabase import get_supabase
+        from app.core.config import get_settings
+        cfg = get_settings()
+        if cfg.smtp_user and "estado" in data:
+            sb = get_supabase()
+            ciudadano = sb.table("ciudadanos").select("nombre, apellido, email").eq("id", updated["ciudadano_id"]).single().execute().data
+            if ciudadano and ciudadano.get("email"):
+                _enviar_email(
+                    ciudadano["email"],
+                    f"Actualización de su trámite - {updated['codigo']}",
+                    f"Estimado/a {ciudadano['nombre']} {ciudadano['apellido']},<br><br>"
+                    f"Su trámite <b>{updated['codigo']}</b> ha sido actualizado.<br><br>"
+                    f"<b>Estado actual:</b> {updated['estado']}<br>"
+                    f"<b>Asunto:</b> {updated.get('asunto', '')}<br><br>"
+                    "Para más información comuníquese con la Municipalidad Provincial de Yau.",
+                )
+    except Exception as e:
+        print(f"ERROR EMAIL TRAMITE: {e}")
     return updated
 
 
@@ -182,6 +230,29 @@ def cambiar_estado(tramite_id: str, body: CambiarEstadoBody, current=Depends(get
     updated = cambiar_estado_tramite(tramite_id, estado_final, body.observacion, current["sub"])
     if not updated:
         raise HTTPException(status_code=404, detail="Trámite no encontrado")
+    # Enviar correo al ciudadano
+    try:
+        from app.services.documento_notif_service import _enviar_email
+        from app.core.supabase import get_supabase
+        from app.core.config import get_settings
+        cfg = get_settings()
+        if cfg.smtp_user:
+            sb = get_supabase()
+            ciudadano = sb.table("ciudadanos").select("nombre, apellido, email").eq("id", updated["ciudadano_id"]).single().execute().data
+            if ciudadano and ciudadano.get("email"):
+                observacion_texto = f"<br><b>Observación:</b> {body.observacion}" if body.observacion else ""
+                _enviar_email(
+                    ciudadano["email"],
+                    f"Cambio de estado de su trámite - {updated['codigo']}",
+                    f"Estimado/a {ciudadano['nombre']} {ciudadano['apellido']},<br><br>"
+                    f"El estado de su trámite <b>{updated['codigo']}</b> ha cambiado.<br><br>"
+                    f"<b>Nuevo estado:</b> {estado_final}<br>"
+                    f"<b>Asunto:</b> {updated.get('asunto', '')}<br>"
+                    f"{observacion_texto}<br><br>"
+                    "Para más información comuníquese con la Municipalidad Provincial de Yau.",
+                )
+    except Exception as e:
+        print(f"ERROR EMAIL ESTADO: {e}")
     return updated
 
 @router_tramites.patch("/{tramite_id}/estado")

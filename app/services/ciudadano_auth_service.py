@@ -36,8 +36,21 @@ def login(email: str, password: str) -> dict | None:
 def crear_usuario(data: dict) -> dict:
     sb = get_supabase()
     data["password_hash"] = hash_password(data.pop("password"))
-    res = sb.table("usuarios").insert(data).execute()
-    return res.data[0]
+    # Si ya existe con ese email pero inactivo, reactivarlo
+    existente = sb.table("usuarios").select("*").eq("email", data["email"]).execute().data
+    if existente:
+        if not existente[0]["activo"]:
+            res = sb.table("usuarios").update({**data, "activo": True}).eq("email", data["email"]).execute()
+            return res.data[0]
+        else:
+            raise ValueError("Ya existe un usuario con ese email")
+    try:
+        res = sb.table("usuarios").insert(data).execute()
+        return res.data[0]
+    except Exception as e:
+        if "23505" in str(e):
+            raise ValueError("Ya existe un usuario con ese email")
+        raise
 
 
 def listar_usuarios() -> list:
