@@ -2,19 +2,15 @@
 """
 Servicio de Machine Learning para clasificación de prioridad de trámites.
 
-Modelo: Red Neuronal (Keras/TensorFlow) - igual estructura que clasificación de calidad
+Modelo: MLPClassifier (scikit-learn) — misma arquitectura que la red neuronal Keras
+        pero sin depender de TensorFlow (~20MB RAM vs ~700MB).
 Features:
   - tipo_tramite        → codificado con LabelEncoder
-  - nivel_urgencia      → numérico 1-5 (normalizado)
   - area_responsable    → codificado con LabelEncoder
-  - tiempo_espera_dias  → numérico (normalizado)
   - cantidad_documentos → numérico (normalizado)
 
 Output: prioridad → alta | media | baja
 """
-
-import os
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import numpy as np
 import pandas as pd
@@ -22,11 +18,12 @@ import joblib
 from pathlib import Path
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.metrics import classification_report, accuracy_score
+from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import classification_report
 
 # ── Rutas ─────────────────────────────────────────────────
 MODEL_DIR     = Path(__file__).parent.parent / "ml_models"
-MODEL_PATH    = MODEL_DIR / "nn_prioridad.keras"
+MODEL_PATH    = MODEL_DIR / "nn_prioridad.joblib"   # ya no es .keras
 ENC_TIPO_PATH = MODEL_DIR / "enc_tipo.joblib"
 ENC_AREA_PATH = MODEL_DIR / "enc_area.joblib"
 SCALER_PATH   = MODEL_DIR / "scaler.joblib"
@@ -35,7 +32,7 @@ CLASES_PATH   = MODEL_DIR / "clases.joblib"
 MODEL_DIR.mkdir(exist_ok=True)
 
 # ── Variables globales ────────────────────────────────────
-_model  = None
+_model: MLPClassifier | None = None
 _enc_tipo: LabelEncoder | None = None
 _enc_area: LabelEncoder | None = None
 _scaler: StandardScaler | None = None
@@ -105,11 +102,11 @@ PESO_AREA = {
 }
 
 
-def _generar_dataset(n: int = 1200) -> pd.DataFrame:
+def _generar_dataset(n: int = 2000) -> pd.DataFrame:
     rng = np.random.default_rng(42)
-    tipos    = rng.choice(TIPOS_TRAMITE, n)
-    areas    = rng.choice(AREAS, n)
-    docs     = rng.integers(0, 16, n)
+    tipos = rng.choice(TIPOS_TRAMITE, n)
+    areas = rng.choice(AREAS, n)
+    docs  = rng.integers(0, 16, n)
 
     prioridades = []
     for tipo, area, d in zip(tipos, areas, docs):
@@ -120,10 +117,10 @@ def _generar_dataset(n: int = 1200) -> pd.DataFrame:
             peso_area * 1.0 +
             min(d / 8, 1.0)
         )
-        score += rng.normal(0, 0.3)
-        if score >= 4.5:
+        score += rng.normal(0, 0.4)   # mismo ruido que el Colab
+        if score >= 5.0:              # mismo umbral que el Colab
             prioridades.append("alta")
-        elif score >= 2.5:
+        elif score >= 2.8:            # mismo umbral que el Colab
             prioridades.append("media")
         else:
             prioridades.append("baja")
@@ -138,8 +135,6 @@ def _generar_dataset(n: int = 1200) -> pd.DataFrame:
 
 def entrenar_modelo() -> dict:
     global _model, _enc_tipo, _enc_area, _scaler, _clases
-    import tensorflow as tf
-    from tensorflow import keras
 
     df = _generar_dataset(1200)
 
@@ -153,7 +148,6 @@ def entrenar_modelo() -> dict:
     clases = list(enc_label.classes_)
 
     X = df[["tipo_enc", "area_enc", "cantidad_documentos"]].values
-
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
@@ -161,60 +155,62 @@ def entrenar_modelo() -> dict:
         X_scaled, y_encoded, test_size=0.2, random_state=42
     )
 
-    model = keras.Sequential([
-        keras.layers.Dense(32, activation="relu", input_shape=(3,)),
-        keras.layers.Dense(16, activation="relu"),
-        keras.layers.Dense(8,  activation="relu"),
-        keras.layers.Dense(3,  activation="softmax"),
-    ])
-    model.compile(
-        optimizer="adam",
-        loss="sparse_categorical_crossentropy",
-        metrics=["accuracy"],
+    # MLPClassifier: misma topología que la red Keras (32→16→8→3)
+    model = MLPClassifier(
+        hidden_layer_sizes=(32, 16, 8),
+        activation="relu",
+        solver="adam",
+        max_iter=300,
+        random_state=42,
+        early_stopping=True,
+        validation_fraction=0.2,
+        n_iter_no_change=15,
     )
-    model.fit(X_train, y_train, epochs=60, validation_split=0.2, verbose=0)
+    model.fit(X_train, y_train)
 
-    loss, accuracy = model.evaluate(X_test, y_test, verbose=0)
-    y_pred = np.argmax(model.predict(X_test, verbose=0), axis=1)
+    y_pred = model.predict(X_test)
+    accuracy = float((y_pred == y_test).mean())
     report = classification_report(y_test, y_pred, target_names=clases, output_dict=True)
 
-    model.save(MODEL_PATH)
+    joblib.dump(model,    MODEL_PATH)
     joblib.dump(enc_tipo, ENC_TIPO_PATH)
     joblib.dump(enc_area, ENC_AREA_PATH)
     joblib.dump(scaler,   SCALER_PATH)
     joblib.dump(clases,   CLASES_PATH)
 
-    _model = model
+    _model    = model
     _enc_tipo = enc_tipo
     _enc_area = enc_area
-    _scaler = scaler
-    _clases = clases
+    _scaler   = scaler
+    _clases   = clases
 
     return {
-        "accuracy": round(float(accuracy), 4),
+        "accuracy": round(accuracy, 4),
         "report":   report,
         "clases":   clases,
-        "features": ["tipo_tramite", "area_responsable",
-                     "tiempo_espera_dias", "cantidad_documentos"],
+        "features": ["tipo_tramite", "area_responsable", "cantidad_documentos"],
     }
 
 
 def cargar_modelo() -> bool:
     global _model, _enc_tipo, _enc_area, _scaler, _clases
-    archivos = [MODEL_PATH, ENC_TIPO_PATH, ENC_AREA_PATH, SCALER_PATH, CLASES_PATH]
-    if all(p.exists() for p in archivos):
-        from tensorflow import keras
-        _model    = keras.models.load_model(MODEL_PATH)
+
+    archivos_sklearn = [MODEL_PATH, ENC_TIPO_PATH, ENC_AREA_PATH, SCALER_PATH, CLASES_PATH]
+
+    if all(p.exists() for p in archivos_sklearn):
+        _model    = joblib.load(MODEL_PATH)
         _enc_tipo = joblib.load(ENC_TIPO_PATH)
         _enc_area = joblib.load(ENC_AREA_PATH)
         _scaler   = joblib.load(SCALER_PATH)
         _clases   = joblib.load(CLASES_PATH)
         return True
+
+    # Si solo existe el modelo Keras viejo, reentrenar con scikit-learn
     entrenar_modelo()
     return True
 
 
-def _preparar_entrada(tipo_tramite, area_responsable, cantidad_documentos):
+def _preparar_entrada(tipo_tramite: str, area_responsable: str, cantidad_documentos: int):
     tipo_enc = _safe_encode(_enc_tipo, tipo_tramite)
     area_enc = _safe_encode(_enc_area, area_responsable)
     X = np.array([[tipo_enc, area_enc, cantidad_documentos]], dtype=float)
@@ -226,13 +222,13 @@ def predecir_con_probabilidades(
     area_responsable: str,
     tiempo_espera_dias: int,
     cantidad_documentos: int,
-    **kwargs,  # ignorar nivel_urgencia si viene del schema viejo
+    **kwargs,
 ) -> dict:
     global _model, _clases
     if _model is None:
         cargar_modelo()
     X = _preparar_entrada(tipo_tramite, area_responsable, cantidad_documentos)
-    proba = _model.predict(X, verbose=0)[0]
+    proba = _model.predict_proba(X)[0]
     idx   = int(np.argmax(proba))
     probabilidades = {c: round(float(p), 4) for c, p in zip(_clases, proba)}
     return {"prioridad": _clases[idx], "probabilidades": probabilidades}
