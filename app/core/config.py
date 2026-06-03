@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
     # App
     app_env: str = "development"
-    app_cors_origins: str = "http://localhost:5173"
+    app_cors_origins: str = "http://localhost:5173,spotty-larisa-goldz9999-9de69ad7.koyeb.app"
 
     @property
     def cors_origins_list(self) -> list[str]:
